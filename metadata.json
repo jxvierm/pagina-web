@@ -1,0 +1,8 @@
+{
+  "name": "FALPRO - Sistema de Gestión y Producción",
+  "description": "Sistema integral de gestión de pedidos, seguimiento de fabricación , cotizaciones, facturación interna, catálogo de aceros y luces, y sincronización en la nube para FALPRO S.A.S.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

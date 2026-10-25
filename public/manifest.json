@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "FALPRO - Sistema de Gestión y Producción",
+  "short_name": "FALPRO",
+  "description": "Sistema integral de gestión de pedidos, fabricación en 6 etapas y sincronización de FALPRO Aceros y Luces.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0d0d0d",
+  "theme_color": "#e50914",
+  "icons": [
+    {
+      "src": "/src/assets/images/falpro_workshop_hero_1792850637721.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}
