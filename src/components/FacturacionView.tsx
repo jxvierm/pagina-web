@@ -9,6 +9,7 @@ import {
   CheckCircle,
   Clock,
   Sparkles,
+  Truck,
 } from 'lucide-react';
 import {
   Pedido,
@@ -17,6 +18,7 @@ import {
   RolePermissions,
   OrderItem,
 } from '../types';
+import { VEHICLE_BRANDS } from '../data/vehicleBrands';
 
 interface FacturacionViewProps {
   pedidos: Pedido[];
@@ -52,25 +54,25 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
   const [quotePhone, setQuotePhone] = useState('');
   const [quoteVehicle, setQuoteVehicle] = useState('');
   const [quoteItems, setQuoteItems] = useState<OrderItem[]>([
-    { id: 'q-it-1', producto: '', desc: '', cant: 1, vUnit: 0, total: 0 },
+    { id: 'q-it-1', producto: '', desc: '', cant: '', vUnit: '', total: 0 },
   ]);
-  const [quoteVigencia, setQuoteVigencia] = useState('15 días hábiles');
+  const [quoteVigencia, setQuoteVigencia] = useState('');
 
   // Direct Invoice form fields
   const [spClient, setSpClient] = useState('');
   const [spNit, setSpNit] = useState('');
   const [spPhone, setSpPhone] = useState('');
   const [spItems, setSpItems] = useState<OrderItem[]>([
-    { id: 'sp-it-1', producto: '', desc: '', cant: 1, vUnit: 0, total: 0 },
+    { id: 'sp-it-1', producto: '', desc: '', cant: '', vUnit: '', total: 0 },
   ]);
-  const [spAbono, setSpAbono] = useState<number>(0);
-  const [spMetodo, setSpMetodo] = useState('Efectivo');
+  const [spAbono, setSpAbono] = useState<number | ''>('');
+  const [spMetodo, setSpMetodo] = useState('');
 
   // Helper for adding quote items
   const addQuoteItem = () => {
     setQuoteItems([
       ...quoteItems,
-      { id: 'q-it-' + Date.now(), producto: '', desc: '', cant: 1, vUnit: 0, total: 0 },
+      { id: 'q-it-' + Date.now(), producto: '', desc: '', cant: '', vUnit: '', total: 0 },
     ]);
   };
 
@@ -88,7 +90,7 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
     setQuoteItems(updated);
   };
 
-  const quoteTotal = quoteItems.reduce((acc, it) => acc + (it.total || 0), 0);
+  const quoteTotal = quoteItems.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
 
   const handleSaveQuote = (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,7 +98,19 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
       alert('Ingrese el nombre del cliente');
       return;
     }
-    const validItems = quoteItems.filter((i) => i.producto.trim().length > 0);
+    const validItems: OrderItem[] = quoteItems
+      .filter((i) => i.producto.trim().length > 0)
+      .map((i) => {
+        const itemCant = i.cant === '' ? 1 : Math.max(1, Number(i.cant) || 1);
+        const itemVUnit = i.vUnit === '' ? 0 : Math.max(0, Number(i.vUnit) || 0);
+        return {
+          ...i,
+          cant: itemCant,
+          vUnit: itemVUnit,
+          total: itemCant * itemVUnit,
+        };
+      });
+
     if (validItems.length === 0) {
       alert('Ingrese al menos un producto o trabajo a cotizar');
       return;
@@ -125,14 +139,15 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
     setQuoteClient('');
     setQuotePhone('');
     setQuoteVehicle('');
-    setQuoteItems([{ id: 'q-it-1', producto: '', desc: '', cant: 1, vUnit: 0, total: 0 }]);
+    setQuoteVigencia('');
+    setQuoteItems([{ id: 'q-it-1', producto: '', desc: '', cant: '', vUnit: '', total: 0 }]);
   };
 
   // Direct Invoice submit
   const addSpItem = () => {
     setSpItems([
       ...spItems,
-      { id: 'sp-it-' + Date.now(), producto: '', desc: '', cant: 1, vUnit: 0, total: 0 },
+      { id: 'sp-it-' + Date.now(), producto: '', desc: '', cant: '', vUnit: '', total: 0 },
     ]);
   };
 
@@ -151,7 +166,8 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
   };
 
   const spTotal = spItems.reduce((acc, it) => acc + (it.total || 0), 0);
-  const spSaldo = Math.max(0, spTotal - (spAbono || 0));
+  const abonoNum = Number(spAbono) || 0;
+  const spSaldo = Math.max(0, spTotal - abonoNum);
 
   const handleSaveSpInvoice = (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,7 +175,19 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
       alert('Ingrese el cliente para la factura');
       return;
     }
-    const validItems = spItems.filter((i) => i.producto.trim().length > 0);
+    const validItems: OrderItem[] = spItems
+      .filter((i) => i.producto.trim().length > 0)
+      .map((i) => {
+        const itemCant = i.cant === '' ? 1 : Math.max(1, Number(i.cant) || 1);
+        const itemVUnit = i.vUnit === '' ? 0 : Math.max(0, Number(i.vUnit) || 0);
+        return {
+          ...i,
+          cant: itemCant,
+          vUnit: itemVUnit,
+          total: itemCant * itemVUnit,
+        };
+      });
+
     if (validItems.length === 0) {
       alert('Agregue al menos un ítem');
       return;
@@ -180,9 +208,9 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
       subtotal: spTotal,
       impuesto: 0,
       total: spTotal,
-      abono: spAbono,
+      abono: abonoNum,
       saldo: spSaldo,
-      metodoPago: spMetodo,
+      metodoPago: spMetodo || 'Efectivo',
       notas: 'Venta directa en mostrador sin orden previa de fabricación',
     };
 
@@ -191,8 +219,9 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
     setSpClient('');
     setSpNit('');
     setSpPhone('');
-    setSpAbono(0);
-    setSpItems([{ id: 'sp-it-1', producto: '', desc: '', cant: 1, vUnit: 0, total: 0 }]);
+    setSpAbono('');
+    setSpMetodo('');
+    setSpItems([{ id: 'sp-it-1', producto: '', desc: '', cant: '', vUnit: '', total: 0 }]);
   };
 
   return (
@@ -200,7 +229,7 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
+          <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2 font-mono italic">
             <span className="w-2.5 h-6 bg-[#e50914] rounded-sm"></span>
             FACTURACIÓN Y COTIZACIONES
           </h1>
@@ -439,16 +468,54 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
-                    Vehículo (Modelo)
-                  </label>
-                  <input
-                    type="text"
-                    value={quoteVehicle}
-                    onChange={(e) => setQuoteVehicle(e.target.value)}
-                    placeholder="Ej. Kenworth T800"
-                    className="w-full bg-neutral-900 border border-neutral-700 p-2 rounded text-xs text-white focus:outline-none focus:border-[#e50914]"
-                  />
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[11px] font-semibold uppercase text-neutral-400">
+                      Marca / Línea del Vehículo
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setQuoteVehicle('No aplica')}
+                      className="text-[10px] text-neutral-400 hover:text-white px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 cursor-pointer"
+                    >
+                      🚫 No aplica
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <select
+                      value={
+                        quoteVehicle === 'No aplica'
+                          ? 'No aplica'
+                          : VEHICLE_BRANDS.find(
+                              (b) => b !== 'No aplica' && b !== 'Otro' && quoteVehicle.toLowerCase().startsWith(b.toLowerCase())
+                            ) || (quoteVehicle ? 'Otro' : '')
+                      }
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === 'No aplica') {
+                          setQuoteVehicle('No aplica');
+                        } else if (val === 'Otro') {
+                          setQuoteVehicle('');
+                        } else {
+                          setQuoteVehicle(val + ' ');
+                        }
+                      }}
+                      className="w-1/2 bg-neutral-900 border border-neutral-700 p-2 rounded text-xs text-white focus:outline-none focus:border-[#e50914]"
+                    >
+                      <option value="">-- Marca --</option>
+                      {VEHICLE_BRANDS.map((b) => (
+                        <option key={b} value={b}>
+                          {b === 'No aplica' ? '⚠️ No aplica' : b}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={quoteVehicle}
+                      onChange={(e) => setQuoteVehicle(e.target.value)}
+                      placeholder="Ej. Kenworth T800 o No aplica"
+                      className="w-1/2 bg-neutral-900 border border-neutral-700 p-2 rounded text-xs text-white focus:outline-none focus:border-[#e50914]"
+                    />
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
@@ -495,8 +562,15 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
                         <input
                           type="number"
                           min={1}
+                          placeholder="1"
                           value={qIt.cant}
-                          onChange={(e) => handleQuoteItemChange(idx, 'cant', parseInt(e.target.value) || 1)}
+                          onChange={(e) =>
+                            handleQuoteItemChange(
+                              idx,
+                              'cant',
+                              e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1)
+                            )
+                          }
                           className="w-full bg-neutral-900 border border-neutral-700 p-1.5 rounded text-xs text-center font-mono text-white"
                         />
                       </div>
@@ -504,9 +578,15 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
                         <input
                           type="number"
                           min={0}
+                          placeholder="0"
                           value={qIt.vUnit}
-                          onChange={(e) => handleQuoteItemChange(idx, 'vUnit', parseFloat(e.target.value) || 0)}
-                          placeholder="V. Unit"
+                          onChange={(e) =>
+                            handleQuoteItemChange(
+                              idx,
+                              'vUnit',
+                              e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0)
+                            )
+                          }
                           className="w-full bg-neutral-900 border border-neutral-700 p-1.5 rounded text-xs text-right font-mono text-white"
                         />
                       </div>
@@ -621,8 +701,15 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
                       <input
                         type="number"
                         min={1}
+                        placeholder="1"
                         value={it.cant}
-                        onChange={(e) => handleSpItemChange(idx, 'cant', parseInt(e.target.value) || 1)}
+                        onChange={(e) =>
+                          handleSpItemChange(
+                            idx,
+                            'cant',
+                            e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1)
+                          )
+                        }
                         className="w-full bg-neutral-900 border border-neutral-700 p-1.5 rounded text-xs text-center font-mono text-white"
                       />
                     </div>
@@ -630,9 +717,15 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
                       <input
                         type="number"
                         min={0}
+                        placeholder="0"
                         value={it.vUnit}
-                        onChange={(e) => handleSpItemChange(idx, 'vUnit', parseFloat(e.target.value) || 0)}
-                        placeholder="V. Unit"
+                        onChange={(e) =>
+                          handleSpItemChange(
+                            idx,
+                            'vUnit',
+                            e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0)
+                          )
+                        }
                         className="w-full bg-neutral-900 border border-neutral-700 p-1.5 rounded text-xs text-right font-mono text-white"
                       />
                     </div>
@@ -643,12 +736,29 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-neutral-900 p-3 rounded-lg border border-neutral-800">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-neutral-900 p-3 rounded-lg border border-neutral-800">
                 <div>
                   <div className="text-[10px] text-neutral-400 uppercase font-bold">Total Factura</div>
                   <div className="text-lg font-black font-mono text-white mt-0.5">
                     ${spTotal.toLocaleString()}
                   </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-neutral-400 uppercase font-bold mb-1">
+                    Método de Pago
+                  </label>
+                  <select
+                    value={spMetodo}
+                    onChange={(e) => setSpMetodo(e.target.value)}
+                    className="w-full bg-neutral-800 border border-neutral-700 p-1.5 rounded text-xs text-white"
+                  >
+                    <option value="">-- Seleccionar --</option>
+                    <option value="Efectivo">Efectivo</option>
+                    <option value="Transferencia Bancolombia">Transferencia Bancolombia</option>
+                    <option value="Nequi / Daviplata">Nequi / Daviplata</option>
+                    <option value="Tarjeta Débito/Crédito">Tarjeta Débito/Crédito</option>
+                    <option value="Crédito Taller">Crédito Taller</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-[10px] text-neutral-400 uppercase font-bold mb-1">
@@ -659,7 +769,8 @@ export const FacturacionView: React.FC<FacturacionViewProps> = ({
                     min={0}
                     max={spTotal}
                     value={spAbono}
-                    onChange={(e) => setSpAbono(parseFloat(e.target.value) || 0)}
+                    onChange={(e) => setSpAbono(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
+                    placeholder="0"
                     className="w-full bg-neutral-800 border border-neutral-700 p-1 rounded text-xs text-white font-mono font-bold"
                   />
                 </div>

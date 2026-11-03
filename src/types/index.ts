@@ -27,6 +27,8 @@ export interface UserAccount {
   preguntaSeguridad?: string;
   respuestaSeguridad?: string;
   updated: string;
+  permissions?: RolePermissions;
+  modulosPermitidos?: ActiveModule[];
 }
 
 export type EtapaEstado = 'Pendiente' | 'En proceso' | 'Completado' | 'No aplica' | 'Bloqueado';
@@ -44,8 +46,8 @@ export interface OrderItem {
   id: string;
   producto: string;
   desc: string;
-  cant: number;
-  vUnit: number;
+  cant: number | '';
+  vUnit: number | '';
   total: number;
   categoria?: 'Aceros' | 'Luces' | 'Otro';
 }
@@ -93,6 +95,8 @@ export interface Pedido {
     bahia?: string;
     notas?: string;
   };
+  fechaEntrega?: string;
+  whatsappNotificado?: boolean;
 }
 
 export interface CatalogoProducto {
@@ -162,6 +166,7 @@ export type ActiveModule =
   | 'catalogo'
   | 'mayoristas'
   | 'cronograma'
+  | 'resumenFinanciero'
   | 'excelCloud'
   | 'usuarios';
 
@@ -171,7 +176,10 @@ export type NotificationType =
   | 'cronograma'
   | 'recordatorio'
   | 'pago'
-  | 'sistema';
+  | 'sistema'
+  | 'inventario'
+  | 'whatsapp'
+  | 'chat';
 
 export type NotificationPriority = 'normal' | 'alta' | 'urgente';
 
@@ -187,4 +195,107 @@ export interface AppNotification {
   pedidoId?: string;
   moduloDestino?: ActiveModule;
 }
+
+export type CategoriaInsumo =
+  | 'Luces LED'
+  | 'Insumos Taller'
+  | 'Abrasivos y Pulido'
+  | 'Soldadura y Gases'
+  | 'Tornillería y Fijación';
+
+export interface InsumoInventario {
+  id: string;
+  nombre: string;
+  categoria: CategoriaInsumo;
+  stockActual: number;
+  stockMinimo: number;
+  unidadMedida: string; // 'Und', 'Metros', 'Rollos', 'Tubos', 'Kg', 'Kits'
+  ubicacion?: string;
+  costoUnitario?: number;
+  ultimaReposicion?: string;
+  notas?: string;
+}
+
+export type EstadoOrdenTrabajo =
+  | 'Pendiente'
+  | 'En Bahía / En Proceso'
+  | 'Control de Calidad'
+  | 'Finalizada'
+  | 'Cancelada';
+
+export type TipoTrabajoOT =
+  | 'Instalación de Lujos Inox'
+  | 'Instalación Eléctrica / Módulos LED'
+  | 'Montaje Completo (Acero + Luces)'
+  | 'Ajuste / Mantenimiento en Bahía'
+  | 'Embalaje y Despacho';
+
+export interface TareaOrdenTrabajo {
+  id: string;
+  descripcion: string;
+  completada: boolean;
+  responsable?: string;
+  tiempoEstimadoMin?: number;
+}
+
+export interface ControlCalidadOT {
+  fijacionMecanica: boolean;
+  pruebaElectrica: boolean;
+  brilladoLimpieza: boolean;
+  aprobadoPor?: string;
+}
+
+export interface OrdenTrabajo {
+  id: string;
+  pedidoId?: string;
+  cliente: string;
+  telefono: string;
+  vehiculo: string;
+  placa?: string;
+  bahia: string;
+  fechaCreacion: string;
+  fechaProgramada: string;
+  horaProgramada?: string;
+  tecnicoLider: string;
+  tipoTrabajo: TipoTrabajoOT;
+  prioridad: 'Normal' | 'Alta' | 'Urgente';
+  estado: EstadoOrdenTrabajo;
+  materiales?: string;
+  observaciones?: string;
+  tareas: TareaOrdenTrabajo[];
+  controlCalidad?: ControlCalidadOT;
+  kilometraje?: string;
+}
+
+export type ChatChannelType = 'general' | 'produccion' | 'ventas' | 'instalacion' | 'direct';
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderRole: UserRole;
+  channelId: string; // 'general' | 'produccion' | 'ventas' | 'instalacion' | 'dm_${userId1}_${userId2}'
+  recipientId?: string; // For 1-on-1 direct messages
+  recipientName?: string;
+  texto: string;
+  timestamp: number;
+  fecha: string;
+  adjuntoFoto?: string | null;
+  pedidoIdRef?: string | null;
+  placaRef?: string | null;
+  reactions?: Record<string, string[]>; // emoji -> array of usernames
+  leidoPor?: string[]; // user IDs who have seen the message
+}
+
+export interface ChatChannel {
+  id: string;
+  nombre: string;
+  descripcion: string;
+  tipo: ChatChannelType;
+  icono?: string;
+  badge?: number;
+  miembros?: string[];
+}
+
+
 

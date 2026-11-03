@@ -77,7 +77,7 @@ export const ProduccionView: React.FC<ProduccionViewProps> = ({
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
+          <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2 font-mono italic">
             <span className="w-2.5 h-6 bg-[#e50914] rounded-sm"></span>
             SEGUIMIENTO DE FABRICACIÓN (TABLERO DE PLANTA)
           </h1>

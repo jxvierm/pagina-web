@@ -22,7 +22,7 @@ export const MayoristasView: React.FC<MayoristasViewProps> = ({
   const [contacto, setContacto] = useState('');
   const [tel, setTel] = useState('');
   const [dir, setDir] = useState('');
-  const [lista, setLista] = useState('Mayorista Platino (15% Desc)');
+  const [lista, setLista] = useState('');
 
   const filtered = mayoristas.filter((m) => {
     const q = search.toLowerCase();
@@ -45,7 +45,7 @@ export const MayoristasView: React.FC<MayoristasViewProps> = ({
       contacto: contacto.trim() || 'Representante Legal',
       tel: tel.trim(),
       dir: dir.trim() || 'Dirección Comercial Principal',
-      lista,
+      lista: lista || 'Mayorista Platino (15% Desc)',
       saldoTotal: 0,
     };
 
@@ -56,6 +56,7 @@ export const MayoristasView: React.FC<MayoristasViewProps> = ({
     setContacto('');
     setTel('');
     setDir('');
+    setLista('');
   };
 
   return (
@@ -63,7 +64,7 @@ export const MayoristasView: React.FC<MayoristasViewProps> = ({
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
+          <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2 font-mono italic">
             <span className="w-2.5 h-6 bg-[#e50914] rounded-sm"></span>
             GESTIÓN DE CLIENTES MAYORISTAS
           </h1>
@@ -234,6 +235,7 @@ export const MayoristasView: React.FC<MayoristasViewProps> = ({
                   onChange={(e) => setLista(e.target.value)}
                   className="w-full bg-neutral-900 border border-neutral-700 p-2 rounded text-xs text-white"
                 >
+                  <option value="">-- Seleccionar Lista de Precios --</option>
                   <option value="Mayorista Platino (15% Desc)">Mayorista Platino (15% Desc)</option>
                   <option value="Mayorista Oro (10% Desc)">Mayorista Oro (10% Desc)</option>
                   <option value="Distribuidor Autorizado">Distribuidor Autorizado</option>

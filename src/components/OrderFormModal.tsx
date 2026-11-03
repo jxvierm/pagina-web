@@ -8,6 +8,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Package,
+  Truck,
+  User,
 } from 'lucide-react';
 import {
   Pedido,
@@ -16,6 +18,7 @@ import {
   UserAccount,
   PedidoEstado,
 } from '../types';
+import { VEHICLE_BRANDS, isNoAplicaVehicle } from '../data/vehicleBrands';
 
 interface OrderFormModalProps {
   isOpen: boolean;
@@ -46,69 +49,83 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
 
   const [code, setCode] = useState(initialCode);
   const [fecha, setFecha] = useState(initialDate);
-  const [vendedor, setVendedor] = useState(currentUser.nombre || 'Asesor Comercial');
+  const [vendedor, setVendedor] = useState(currentUser?.nombre || currentUser?.user || 'Administrador');
   const [cliente, setCliente] = useState('');
   const [telefono, setTelefono] = useState('');
   const [tipoCliente, setTipoCliente] = useState<'minorista' | 'mayorista'>('minorista');
-  const [vehiculo, setVehiculo] = useState('');
+  const [fechaEntrega, setFechaEntrega] = useState('');
+  const [marcaVehiculo, setMarcaVehiculo] = useState<string>('');
+  const [lineaVehiculo, setLineaVehiculo] = useState('');
   const [placa, setPlaca] = useState('');
   const [estado, setEstado] = useState<PedidoEstado>('Pendiente');
   const [observaciones, setObservaciones] = useState('');
 
   // Lights conditional
   const [llevaLuces, setLlevaLuces] = useState(false);
-  const [voltaje, setVoltaje] = useState<'12V' | '24V'>('24V');
+  const [voltaje, setVoltaje] = useState<'12V' | '24V' | ''>('');
   const [colorLogos, setColorLogos] = useState('');
 
   // Photo
   const [fotoRef, setFotoRef] = useState<string | null>(null);
 
-  // Items
+  // Items - start completely clean and fully erasable
   const [items, setItems] = useState<OrderItem[]>([
     {
       id: 'it-init-1',
       producto: '',
       desc: '',
-      cant: 1,
-      vUnit: 0,
+      cant: '',
+      vUnit: '',
       total: 0,
       categoria: 'Aceros',
     },
   ]);
 
-  // Down payment
-  const [abonoInicial, setAbonoInicial] = useState<number>(0);
-  const [metodoAbonoInicial, setMetodoAbonoInicial] = useState('Transferencia Bancaria');
+  // Down payment - starts completely clean and erasable
+  const [abonoInicial, setAbonoInicial] = useState<number | ''>('');
+  const [metodoAbonoInicial, setMetodoAbonoInicial] = useState('');
+
+  const isVehicleNoAplica = marcaVehiculo === 'No aplica';
+
+  const handleSetNoAplica = () => {
+    setMarcaVehiculo('No aplica');
+    setLineaVehiculo('');
+    setPlaca('N/A');
+  };
 
   // Reset when opened
   useEffect(() => {
     if (isOpen) {
       setCode(`FAL-2026-${String(totalOrdersCount + 1).padStart(5, '0')}`);
       setFecha(initialDate);
+      setFechaEntrega('');
+      setVendedor(currentUser?.nombre || currentUser?.user || '');
       setCliente('');
       setTelefono('');
-      setVehiculo('');
+      setMarcaVehiculo('');
+      setLineaVehiculo('');
       setPlaca('');
       setObservaciones('');
       setLlevaLuces(false);
-      setVoltaje('24V');
+      setVoltaje('');
       setColorLogos('');
       setFotoRef(null);
-      setAbonoInicial(0);
+      setAbonoInicial('');
+      setMetodoAbonoInicial('');
       setEstado('Pendiente');
       setItems([
         {
           id: 'it-' + Date.now(),
           producto: '',
           desc: '',
-          cant: 1,
-          vUnit: 0,
+          cant: '',
+          vUnit: '',
           total: 0,
           categoria: 'Aceros',
         },
       ]);
     }
-  }, [isOpen, totalOrdersCount]);
+  }, [isOpen, totalOrdersCount, currentUser]);
 
   if (!isOpen) return null;
 
@@ -164,8 +181,8 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
         id: 'it-' + Date.now() + Math.random().toString(36).substring(2, 5),
         producto: '',
         desc: '',
-        cant: 1,
-        vUnit: 0,
+        cant: '',
+        vUnit: '',
         total: 0,
         categoria: 'Aceros',
       },
@@ -184,10 +201,11 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
       const catProd = catalogo.find((c) => c.nombre === it.producto);
       if (catProd) {
         const newUnit = newType === 'mayorista' ? catProd.pMayorista : catProd.pMinorista;
+        const currentCant = Number(it.cant) || 1;
         return {
           ...it,
           vUnit: newUnit,
-          total: it.cant * newUnit,
+          total: currentCant * newUnit,
         };
       }
       return it;
@@ -195,8 +213,9 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
     setItems(updated);
   };
 
-  const totalCalculado = items.reduce((acc, it) => acc + (it.total || 0), 0);
-  const saldoCalculado = Math.max(0, totalCalculado - (abonoInicial || 0));
+  const totalCalculado = items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+  const abonoNum = Number(abonoInicial) || 0;
+  const saldoCalculado = Math.max(0, totalCalculado - abonoNum);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -225,31 +244,56 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
       return;
     }
 
-    const validItems = items.filter((it) => it.producto.trim().length > 0);
+    const validItems: OrderItem[] = items
+      .filter((it) => it.producto.trim().length > 0)
+      .map((it) => {
+        const itemCant = it.cant === '' ? 1 : Math.max(1, Number(it.cant) || 1);
+        const itemVUnit = it.vUnit === '' ? 0 : Math.max(0, Number(it.vUnit) || 0);
+        return {
+          ...it,
+          cant: itemCant,
+          vUnit: itemVUnit,
+          total: itemCant * itemVUnit,
+        };
+      });
+
     if (validItems.length === 0) {
       alert('Debe agregar al menos un producto o trabajo a realizar.');
       return;
     }
 
     const abonos = [];
-    if (abonoInicial > 0) {
+    if (abonoNum > 0) {
       abonos.push({
         id: 'ab-init-' + Date.now(),
         fecha: `${fecha} ${new Date().toLocaleTimeString().slice(0, 5)}`,
-        monto: abonoInicial,
-        metodo: metodoAbonoInicial,
+        monto: abonoNum,
+        metodo: metodoAbonoInicial || 'Efectivo',
         comprobante: `INI-${code.slice(-5)}`,
         usuario: currentUser.nombre,
       });
     }
 
+    // Determine final vehicle string
+    let finalVehiculo = 'No aplica';
+    if (marcaVehiculo !== 'No aplica') {
+      if (marcaVehiculo === 'Otro') {
+        finalVehiculo = lineaVehiculo.trim() || 'Vehículo Especial';
+      } else {
+        finalVehiculo = lineaVehiculo.trim()
+          ? `${marcaVehiculo} ${lineaVehiculo.trim()}`
+          : marcaVehiculo;
+      }
+    }
+
     const newOrder: Pedido = {
       id: code,
       fecha,
+      fechaEntrega: fechaEntrega || undefined,
       cliente: cliente.trim(),
       telefono: telefono.trim(),
-      vehiculo: vehiculo.trim(),
-      placa: '',
+      vehiculo: finalVehiculo,
+      placa: isVehicleNoAplica && !placa ? 'N/A' : placa.trim(),
       tipoCliente,
       vendedor,
       llevaLuces,
@@ -302,7 +346,7 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Metadata Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div>
               <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
                 Número de Pedido
@@ -316,7 +360,7 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
             </div>
             <div>
               <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
-                Fecha (dd/mm/aa)*
+                Fecha Registro (dd/mm/aa)*
               </label>
               <input
                 type="text"
@@ -329,18 +373,43 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
               />
             </div>
             <div>
-              <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
-                Vendedor Responsable*
-              </label>
-              <select
-                value={vendedor}
-                onChange={(e) => setVendedor(e.target.value)}
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-semibold uppercase text-neutral-400">
+                  Fecha Entrega*
+                </label>
+                <span className="text-[9px] text-amber-400 font-mono">Aviso 8 días</span>
+              </div>
+              <input
+                type="date"
+                value={fechaEntrega}
+                onChange={(e) => setFechaEntrega(e.target.value)}
+                required
                 className="w-full bg-neutral-900 border border-neutral-700 px-3 py-2 rounded-lg text-xs text-white focus:outline-none focus:border-[#e50914]"
-              >
-                <option value="Carlos Rojas">Carlos Rojas</option>
-                <option value="Lucía Méndez">Lucía Méndez</option>
-                <option value="Administrador">Administrador</option>
-              </select>
+              />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-semibold uppercase text-neutral-400">
+                  Vendedor Responsable*
+                </label>
+                <span className="text-[10px] text-green-400 font-semibold flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> Sesión activa
+                </span>
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={vendedor}
+                  onChange={(e) => setVendedor(e.target.value)}
+                  required
+                  placeholder="Nombre del vendedor"
+                  className="w-full bg-neutral-900 border border-neutral-700 px-3 py-2 pl-8 rounded-lg text-xs text-white font-semibold focus:outline-none focus:border-[#e50914]"
+                />
+                <User className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-2.5" />
+              </div>
+              <p className="text-[10px] text-neutral-500 mt-1 truncate">
+                Cargado automáticamente: <span className="text-neutral-300 font-semibold">{currentUser?.nombre || currentUser?.user}</span>
+              </p>
             </div>
           </div>
 
@@ -430,22 +499,94 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
             </div>
           </div>
 
-          {/* Vehicle and Initial Status */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
-                Marca / Línea del Vehículo*
-              </label>
-              <input
-                type="text"
-                value={vehiculo}
-                onChange={(e) => setVehiculo(e.target.value)}
-                required
-                placeholder="Ej. Kenworth T800 / Chevrolet FVR"
-                className="w-full bg-neutral-900 border border-neutral-700 px-3 py-2 rounded-lg text-xs text-white focus:outline-none focus:border-[#e50914]"
-              />
+          {/* Vehicle Brand & Placa with "No aplica" option */}
+          <div className="bg-neutral-900/60 border border-neutral-800 p-3.5 rounded-lg space-y-3">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+              <div className="flex items-center gap-2">
+                <Truck className="w-4 h-4 text-[#e50914]" />
+                <span className="text-xs font-bold text-white uppercase tracking-wide">
+                  Datos del Vehículo o Aplicación
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleSetNoAplica}
+                className={`px-2.5 py-1 rounded text-[11px] font-bold border transition cursor-pointer flex items-center gap-1.5 ${
+                  isVehicleNoAplica
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border-neutral-700'
+                }`}
+              >
+                <span>🚫</span>
+                <span>{isVehicleNoAplica ? 'Marcado como No Aplica' : 'Marcar "No aplica"'}</span>
+              </button>
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
+                  Marca de Vehículo*
+                </label>
+                <select
+                  value={marcaVehiculo}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setMarcaVehiculo(val);
+                    if (val === 'No aplica') {
+                      setLineaVehiculo('');
+                      if (!placa) setPlaca('N/A');
+                    }
+                  }}
+                  className={`w-full bg-neutral-900 border px-3 py-2 rounded-lg text-xs text-white focus:outline-none ${
+                    isVehicleNoAplica
+                      ? 'border-amber-500/50 bg-amber-950/20 text-amber-200'
+                      : 'border-neutral-700 focus:border-[#e50914]'
+                  }`}
+                >
+                  <option value="">-- Seleccione Marca --</option>
+                  {VEHICLE_BRANDS.map((brand) => (
+                    <option key={brand} value={brand}>
+                      {brand === 'No aplica' ? '⚠️ No aplica (Accesorio o sin vehículo)' : brand}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
+                  Línea / Modelo / Referencia
+                </label>
+                <input
+                  type="text"
+                  value={lineaVehiculo}
+                  disabled={isVehicleNoAplica}
+                  onChange={(e) => setLineaVehiculo(e.target.value)}
+                  placeholder={isVehicleNoAplica ? 'No aplica' : 'Ej. T800, Cascadia, FVR'}
+                  className={`w-full bg-neutral-900 border px-3 py-2 rounded-lg text-xs text-white focus:outline-none ${
+                    isVehicleNoAplica
+                      ? 'opacity-40 border-neutral-800 cursor-not-allowed'
+                      : 'border-neutral-700 focus:border-[#e50914]'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
+                  Placa (Opcional si No Aplica)
+                </label>
+                <input
+                  type="text"
+                  value={placa}
+                  onChange={(e) => setPlaca(e.target.value.toUpperCase())}
+                  placeholder={isVehicleNoAplica ? 'N/A' : 'Ej. SNT-452'}
+                  className="w-full bg-neutral-900 border border-neutral-700 px-3 py-2 rounded-lg text-xs text-white font-mono uppercase focus:outline-none focus:border-[#e50914]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Initial Status */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold uppercase text-neutral-400 mb-1">
                 Estado Inicial de Entrada
@@ -583,8 +724,13 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
                           type="number"
                           value={it.cant}
                           min={1}
+                          placeholder="1"
                           onChange={(e) =>
-                            handleItemChange(idx, 'cant', parseInt(e.target.value) || 1)
+                            handleItemChange(
+                              idx,
+                              'cant',
+                              e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1)
+                            )
                           }
                           className="w-full bg-neutral-900 border border-neutral-700 p-1.5 rounded text-white text-xs text-center font-mono font-bold focus:outline-none focus:border-[#e50914]"
                         />
@@ -595,8 +741,13 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
                           type="number"
                           value={it.vUnit}
                           min={0}
+                          placeholder="0"
                           onChange={(e) =>
-                            handleItemChange(idx, 'vUnit', parseFloat(e.target.value) || 0)
+                            handleItemChange(
+                              idx,
+                              'vUnit',
+                              e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0)
+                            )
                           }
                           className="w-full bg-neutral-900 border border-neutral-700 p-1.5 rounded text-white text-xs text-right font-mono font-bold focus:outline-none focus:border-[#e50914]"
                         />
@@ -644,10 +795,15 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
                 value={abonoInicial}
                 min={0}
                 max={totalCalculado}
-                onChange={(e) => setAbonoInicial(parseFloat(e.target.value) || 0)}
+                placeholder="0"
+                onChange={(e) =>
+                  setAbonoInicial(
+                    e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0)
+                  )
+                }
                 className="w-full bg-neutral-800 border border-neutral-700 px-3 py-1.5 rounded text-xs text-white font-mono font-bold focus:outline-none focus:border-[#e50914]"
               />
-              {abonoInicial > 0 && (
+              {abonoNum > 0 && (
                 <select
                   value={metodoAbonoInicial}
                   onChange={(e) => setMetodoAbonoInicial(e.target.value)}

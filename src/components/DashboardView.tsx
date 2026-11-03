@@ -35,6 +35,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [filterVendedor, setFilterVendedor] = useState('todos');
   const [filterTipo, setFilterTipo] = useState('todos');
 
+  // Dynamic list of unique real vendors from actual orders (no example vendors)
+  const vendedoresList = Array.from(
+    new Set(pedidos.map((p) => p.vendedor).filter((v): v is string => Boolean(v && v.trim())))
+  );
+
   // Filtered orders
   const filteredOrders = pedidos.filter((p) => {
     const q = searchTerm.toLowerCase();
@@ -137,9 +142,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             className="px-2.5 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-white focus:outline-none focus:border-[#e50914]"
           >
             <option value="todos">Todos los Vendedores</option>
-            <option value="Carlos Rojas">Carlos Rojas</option>
-            <option value="Lucía Méndez">Lucía Méndez</option>
-            <option value="Administrador">Administrador</option>
+            {vendedoresList.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
           </select>
 
           <select

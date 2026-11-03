@@ -10,8 +10,17 @@ import {
   Clock,
   Eye,
   FileSpreadsheet,
+  Pencil,
+  Calendar,
+  AlertTriangle,
+  MessageCircle,
+  Bell,
+  Check,
 } from 'lucide-react';
-import { Pedido, PedidoEstado, UserAccount, RolePermissions } from '../types';
+import { Pedido, PedidoEstado, UserAccount, RolePermissions, CatalogoProducto } from '../types';
+import { EditOrderModal } from './EditOrderModal';
+import { WhatsAppNotifyModal } from './WhatsAppNotifyModal';
+import { checkDelivery8DayReminder } from '../utils/orderHelpers';
 
 interface PedidosViewProps {
   pedidos: Pedido[];
@@ -19,8 +28,11 @@ interface PedidosViewProps {
   onOpenInvoiceModal: (pedido: Pedido) => void;
   onOpenAbonosModal: (pedido: Pedido) => void;
   onUpdateOrderStatus: (pedidoId: string, nuevoEstado: PedidoEstado) => void;
+  onUpdateOrder?: (updatedOrder: Pedido) => void;
   onDeleteOrder?: (pedidoId: string) => void;
   permissions: RolePermissions;
+  catalogo?: CatalogoProducto[];
+  currentUser?: UserAccount;
 }
 
 export const PedidosView: React.FC<PedidosViewProps> = ({
@@ -29,13 +41,25 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
   onOpenInvoiceModal,
   onOpenAbonosModal,
   onUpdateOrderStatus,
+  onUpdateOrder,
   onDeleteOrder,
   permissions,
+  catalogo = [],
+  currentUser,
 }) => {
   const [search, setSearch] = useState('');
   const [filterEstado, setFilterEstado] = useState('todos');
   const [filterTipo, setFilterTipo] = useState('todos');
+  const [filterOnlyDeliveryAlerts, setFilterOnlyDeliveryAlerts] = useState(false);
   const [selectedPedidoDetalle, setSelectedPedidoDetalle] = useState<Pedido | null>(null);
+  const [editingOrder, setEditingOrder] = useState<Pedido | null>(null);
+  const [whatsAppModalOrder, setWhatsAppModalOrder] = useState<Pedido | null>(null);
+
+  // Orders that have active 8-day deadline alert or overdue
+  const ordersWithDeliveryAlert = pedidos.filter((p) => {
+    const alert = checkDelivery8DayReminder(p.fechaEntrega, p.estado);
+    return alert.isAlert;
+  });
 
   const filtered = pedidos.filter((p) => {
     const q = search.toLowerCase();
@@ -49,15 +73,39 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
     const matchEstado = filterEstado === 'todos' || p.estado === filterEstado;
     const matchTipo = filterTipo === 'todos' || p.tipoCliente === filterTipo;
 
-    return matchSearch && matchEstado && matchTipo;
+    const deliveryAlert = checkDelivery8DayReminder(p.fechaEntrega, p.estado);
+    const matchDeliveryAlert = !filterOnlyDeliveryAlerts || deliveryAlert.isAlert;
+
+    return matchSearch && matchEstado && matchTipo && matchDeliveryAlert;
   });
+
+  const handleStatusChange = (pedido: Pedido, nuevoEstado: PedidoEstado) => {
+    onUpdateOrderStatus(pedido.id, nuevoEstado);
+    // If completed or ready for install, automatically pop up WhatsApp notification
+    if (nuevoEstado === 'Listo para Instalación' || nuevoEstado === 'Entregado') {
+      const updated = { ...pedido, estado: nuevoEstado };
+      setWhatsAppModalOrder(updated);
+    }
+  };
+
+  const handleMarkWhatsAppSent = (pedidoId: string) => {
+    if (onUpdateOrder) {
+      const order = pedidos.find((p) => p.id === pedidoId);
+      if (order) {
+        onUpdateOrder({
+          ...order,
+          whatsappNotificado: true,
+        });
+      }
+    }
+  };
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
+          <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2 font-mono italic">
             <span className="w-2.5 h-6 bg-[#e50914] rounded-sm"></span>
             REGISTRO Y GESTIÓN DE PEDIDOS
           </h1>
@@ -76,6 +124,42 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
         )}
       </div>
 
+      {/* 8-Day Delivery Deadline Alert Banner */}
+      {ordersWithDeliveryAlert.length > 0 && (
+        <div className="bg-gradient-to-r from-amber-950/40 via-red-950/30 to-amber-950/40 border border-amber-600/40 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5 text-amber-400 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black uppercase text-amber-300 tracking-wider">
+                  Aviso Preventivo de Entregas (8 Días)
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-black">
+                  {ordersWithDeliveryAlert.length} pendiente(s)
+                </span>
+              </div>
+              <p className="text-xs text-neutral-300 mt-0.5">
+                Hay {ordersWithDeliveryAlert.length} pedido(s) con fecha de entrega próxima (≤ 8 días) o plazo cumplido que aún no han sido finalizados.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setFilterOnlyDeliveryAlerts(!filterOnlyDeliveryAlerts)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer ${
+              filterOnlyDeliveryAlerts
+                ? 'bg-amber-500 text-black shadow-md'
+                : 'bg-amber-900/60 hover:bg-amber-800 text-amber-200 border border-amber-700/60'
+            }`}
+          >
+            <Calendar className="w-3.5 h-3.5" />
+            {filterOnlyDeliveryAlerts ? 'Ver Todos los Pedidos' : 'Filtrar Solo Alertas (8D)'}
+          </button>
+        </div>
+      )}
+
       {/* Filter and Search Bar */}
       <div className="bg-[#141414] border border-neutral-800 p-4 rounded-xl flex flex-wrap gap-3 items-center justify-between">
         <div className="flex items-center gap-2 flex-1 min-w-[240px]">
@@ -90,6 +174,20 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {ordersWithDeliveryAlert.length > 0 && (
+            <button
+              onClick={() => setFilterOnlyDeliveryAlerts(!filterOnlyDeliveryAlerts)}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                filterOnlyDeliveryAlerts
+                  ? 'bg-amber-500 text-black'
+                  : 'bg-neutral-900 border border-neutral-700 text-amber-400 hover:border-amber-600'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Avisos 8D ({ordersWithDeliveryAlert.length})
+            </button>
+          )}
+
           <select
             value={filterEstado}
             onChange={(e) => setFilterEstado(e.target.value)}
@@ -122,7 +220,8 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
             <thead className="bg-neutral-900 text-neutral-300 uppercase font-semibold">
               <tr className="border-b border-neutral-800">
                 <th className="p-3">Código</th>
-                <th className="p-3">Fecha</th>
+                <th className="p-3">Fecha Pedido</th>
+                <th className="p-3">Fecha Entrega</th>
                 <th className="p-3">Cliente</th>
                 <th className="p-3">Teléfono</th>
                 <th className="p-3">Vehículo</th>
@@ -138,19 +237,39 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
             <tbody className="divide-y divide-neutral-800/80">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="p-6 text-center text-neutral-500">
+                  <td colSpan={13} className="p-6 text-center text-neutral-500">
                     No se encontraron pedidos con los criterios de búsqueda.
                   </td>
                 </tr>
               ) : (
                 filtered.map((p) => {
                   const totalAbonado = p.abonos.reduce((sum, a) => sum + a.monto, 0);
+                  const deliveryAlert = checkDelivery8DayReminder(p.fechaEntrega, p.estado);
+
                   return (
                     <tr key={p.id} className="hover:bg-neutral-900/50 transition">
                       <td className="p-3 font-mono font-bold text-[#e50914] whitespace-nowrap">
                         {p.id}
                       </td>
                       <td className="p-3 font-mono text-neutral-400 whitespace-nowrap">{p.fecha}</td>
+                      <td className="p-3 whitespace-nowrap">
+                        {p.fechaEntrega ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono text-neutral-300 flex items-center gap-1">
+                              <Calendar className="w-3 h-3 text-neutral-400" />
+                              {p.fechaEntrega}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] border inline-flex items-center gap-1 w-fit ${deliveryAlert.badgeClass}`}
+                            >
+                              {deliveryAlert.isAlert && <AlertTriangle className="w-2.5 h-2.5 shrink-0" />}
+                              {deliveryAlert.statusText}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-neutral-500 text-[10px] italic">Sin fecha</span>
+                        )}
+                      </td>
                       <td className="p-3 font-bold text-white whitespace-nowrap">
                         {p.cliente}
                         {p.fotoRef && (
@@ -214,7 +333,7 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
                           <select
                             value={p.estado}
                             onChange={(e) =>
-                              onUpdateOrderStatus(p.id, e.target.value as PedidoEstado)
+                              handleStatusChange(p, e.target.value as PedidoEstado)
                             }
                             className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-[10px] font-bold text-neutral-200 focus:outline-none focus:border-[#e50914]"
                           >
@@ -233,6 +352,17 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
                       <td className="p-3 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
                           <button
+                            onClick={() => setWhatsAppModalOrder(p)}
+                            title="Notificar por WhatsApp al Cliente"
+                            className={`p-1.5 rounded border transition cursor-pointer flex items-center justify-center ${
+                              p.whatsappNotificado
+                                ? 'bg-emerald-950/70 hover:bg-emerald-900 text-emerald-400 border-emerald-800'
+                                : 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                            }`}
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                          </button>
+                          <button
                             onClick={() => onOpenAbonosModal(p)}
                             title="Registrar / Ver Abonos"
                             className="p-1.5 bg-green-950 hover:bg-green-900 text-green-400 rounded border border-green-800/80 transition"
@@ -249,10 +379,19 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
                           <button
                             onClick={() => setSelectedPedidoDetalle(p)}
                             title="Ver Ítems y Detalles"
-                            className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 transition"
+                            className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 transition cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
+                          {permissions.editar && onUpdateOrder && (
+                            <button
+                              onClick={() => setEditingOrder(p)}
+                              title="Editar Pedido"
+                              className="p-1.5 bg-amber-950/60 hover:bg-amber-900 text-amber-400 rounded border border-amber-900/80 transition cursor-pointer"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           {permissions.eliminar && onDeleteOrder && (
                             <button
                               onClick={() => {
@@ -337,13 +476,51 @@ export const PedidosView: React.FC<PedidosViewProps> = ({
             <div className="flex justify-end pt-2 border-t border-neutral-800">
               <button
                 onClick={() => setSelectedPedidoDetalle(null)}
-                className="px-4 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold rounded-lg"
+                className="px-4 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold rounded-lg cursor-pointer"
               >
                 Cerrar
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Edit Order Modal */}
+      {editingOrder && (
+        <EditOrderModal
+          isOpen={!!editingOrder}
+          onClose={() => setEditingOrder(null)}
+          order={editingOrder}
+          onSaveEditedOrder={(updated) => {
+            if (onUpdateOrder) {
+              onUpdateOrder(updated);
+            }
+            setEditingOrder(null);
+          }}
+          catalogo={catalogo}
+          currentUser={
+            currentUser || {
+              id: 'usr-admin',
+              user: 'admin',
+              nombre: 'Administrador',
+              role: 'Administrador',
+              estado: 'Activo',
+              updated: '',
+            }
+          }
+        />
+      )}
+
+      {/* WhatsApp Notification Modal */}
+      {whatsAppModalOrder && (
+        <WhatsAppNotifyModal
+          isOpen={!!whatsAppModalOrder}
+          onClose={() => setWhatsAppModalOrder(null)}
+          pedido={whatsAppModalOrder}
+          onMarkAsSent={(pedidoId) => {
+            handleMarkWhatsAppSent(pedidoId);
+          }}
+        />
       )}
     </div>
   );

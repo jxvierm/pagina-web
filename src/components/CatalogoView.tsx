@@ -14,8 +14,15 @@ import {
   CheckCircle2,
   AlertTriangle,
   Link as LinkIcon,
+  Boxes,
 } from 'lucide-react';
-import { CatalogoProducto, UserAccount, RolePermissions } from '../types';
+import {
+  CatalogoProducto,
+  UserAccount,
+  RolePermissions,
+  InsumoInventario,
+} from '../types';
+import { InventarioView } from './InventarioView';
 
 interface CatalogoViewProps {
   catalogo: CatalogoProducto[];
@@ -25,6 +32,12 @@ interface CatalogoViewProps {
   onUpdatePrecios: (prodId: string, pMinorista: number, pMayorista: number) => void;
   currentUser: UserAccount;
   permissions: RolePermissions;
+  // Inventory of lights and workshop supplies
+  inventario?: InsumoInventario[];
+  onAddInsumo?: (insumo: InsumoInventario) => void;
+  onUpdateInsumo?: (insumo: InsumoInventario) => void;
+  onDeleteInsumo?: (insumoId: string) => void;
+  onAdjustStock?: (insumoId: string, newStock: number, motivo: string) => void;
 }
 
 export const CatalogoView: React.FC<CatalogoViewProps> = ({
@@ -35,7 +48,13 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
   onUpdatePrecios,
   currentUser,
   permissions,
+  inventario = [],
+  onAddInsumo,
+  onUpdateInsumo,
+  onDeleteInsumo,
+  onAdjustStock,
 }) => {
+  const [subTab, setSubTab] = useState<'catalogo' | 'inventario'>('catalogo');
   const [filterCat, setFilterCat] = useState<'todos' | 'Aceros' | 'Luces'>('todos');
   const [search, setSearch] = useState('');
 
@@ -47,8 +66,8 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
   const [nombre, setNombre] = useState('');
   const [categoria, setCategoria] = useState<'Aceros' | 'Luces'>('Aceros');
   const [desc, setDesc] = useState('');
-  const [pMinorista, setPMinorista] = useState<number>(0);
-  const [pMayorista, setPMayorista] = useState<number>(0);
+  const [pMinorista, setPMinorista] = useState<number | ''>('');
+  const [pMayorista, setPMayorista] = useState<number | ''>('');
   const [uploadedImage, setUploadedImage] = useState<string>('');
   const [imageUrlInput, setImageUrlInput] = useState<string>('');
   const [showUrlField, setShowUrlField] = useState(false);
@@ -57,8 +76,8 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
   const [editNombre, setEditNombre] = useState('');
   const [editCategoria, setEditCategoria] = useState<'Aceros' | 'Luces'>('Aceros');
   const [editDesc, setEditDesc] = useState('');
-  const [editMin, setEditMin] = useState<number>(0);
-  const [editMay, setEditMay] = useState<number>(0);
+  const [editMin, setEditMin] = useState<number | ''>('');
+  const [editMay, setEditMay] = useState<number | ''>('');
   const [editImage, setEditImage] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -128,7 +147,7 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
     if (onUpdateProducto) {
       onUpdateProducto(updated);
     } else {
-      onUpdatePrecios(editingProd.id, editMin, editMay);
+      onUpdatePrecios(editingProd.id, Number(editMin) || 0, Number(editMay) || 0);
     }
     setEditingProd(null);
   };
@@ -158,8 +177,8 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
     setShowAddModal(false);
     setNombre('');
     setDesc('');
-    setPMinorista(0);
-    setPMayorista(0);
+    setPMinorista('');
+    setPMayorista('');
     setUploadedImage('');
     setImageUrlInput('');
     setShowUrlField(false);
@@ -177,38 +196,93 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
     }
   };
 
+  const lowStockCount = inventario.filter((i) => i.stockActual <= i.stockMinimo).length;
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
-            <span className="w-2.5 h-6 bg-[#e50914] rounded-sm"></span>
-            CATÁLOGO DE PRODUCTOS Y TARIFAS
-          </h1>
-          <p className="text-xs text-neutral-400">
-            Líneas de producción de lujos para vehículos con fotos reales y tarifas Minorista / Mayorista
-          </p>
+      {/* Main Mode Tabs: Catálogo vs Inventario de Luces e Insumos */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-1.5 bg-[#141414] border border-neutral-800 rounded-xl">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSubTab('catalogo')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              subTab === 'catalogo'
+                ? 'bg-[#e50914] text-white shadow-md shadow-red-900/30'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-900'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            Catálogo de Productos ({catalogo.length})
+          </button>
+
+          <button
+            onClick={() => setSubTab('inventario')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              subTab === 'inventario'
+                ? 'bg-[#e50914] text-white shadow-md shadow-red-900/30'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-900'
+            }`}
+          >
+            <Boxes className="w-4 h-4 text-amber-400" />
+            Inventario de Luces e Insumos ({inventario.length})
+            {lowStockCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-black flex items-center gap-1 animate-pulse">
+                <AlertTriangle className="w-3 h-3" /> {lowStockCount} alertas
+              </span>
+            )}
+          </button>
         </div>
 
-        {permissions.crear && (
-          <button
-            onClick={() => {
-              setUploadedImage('');
-              setImageUrlInput('');
-              setShowAddModal(true);
-            }}
-            className="px-4 py-2.5 bg-[#e50914] hover:bg-[#b80710] text-white rounded-lg text-xs font-bold transition flex items-center gap-2 shadow-lg shadow-red-900/40 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" /> Agregar Producto
-          </button>
-        )}
+        <div className="text-[11px] text-neutral-400 pr-2 hidden sm:block">
+          {subTab === 'catalogo'
+            ? 'Productos terminados y listas de precios'
+            : 'Módulos LED, cintas, abrasivos, soldadura y tornillería'}
+        </div>
       </div>
 
-      {/* Filter and Category Tabs */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-neutral-800 pb-4">
-        <div className="flex items-center gap-1.5 p-1 bg-neutral-900 rounded-lg border border-neutral-800 overflow-x-auto max-w-full">
-          <button
+      {/* Render InventarioView if subTab is 'inventario' */}
+      {subTab === 'inventario' ? (
+        <InventarioView
+          inventario={inventario}
+          onAddInsumo={onAddInsumo || (() => {})}
+          onUpdateInsumo={onUpdateInsumo || (() => {})}
+          onDeleteInsumo={onDeleteInsumo || (() => {})}
+          onAdjustStock={onAdjustStock || (() => {})}
+          currentUser={currentUser}
+          permissions={permissions}
+        />
+      ) : (
+        <>
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2 font-mono italic">
+                <span className="w-2.5 h-6 bg-[#e50914] rounded-sm"></span>
+                CATÁLOGO DE PRODUCTOS Y TARIFAS
+              </h1>
+              <p className="text-xs text-neutral-400">
+                Líneas de producción de lujos para vehículos con fotos reales y tarifas Minorista / Mayorista
+              </p>
+            </div>
+
+            {permissions.crear && (
+              <button
+                onClick={() => {
+                  setUploadedImage('');
+                  setImageUrlInput('');
+                  setShowAddModal(true);
+                }}
+                className="px-4 py-2.5 bg-[#e50914] hover:bg-[#b80710] text-white rounded-lg text-xs font-bold transition flex items-center gap-2 shadow-lg shadow-red-900/40 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" /> Agregar Producto
+              </button>
+            )}
+          </div>
+
+          {/* Filter and Category Tabs */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-neutral-800 pb-4">
+            <div className="flex items-center gap-1.5 p-1 bg-neutral-900 rounded-lg border border-neutral-800 overflow-x-auto max-w-full">
+              <button
             onClick={() => setFilterCat('todos')}
             className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer whitespace-nowrap ${
               filterCat === 'todos'
@@ -470,7 +544,8 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
                     type="number"
                     min={0}
                     value={editMin}
-                    onChange={(e) => setEditMin(parseFloat(e.target.value) || 0)}
+                    placeholder="0"
+                    onChange={(e) => setEditMin(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
                     className="w-full bg-neutral-900 border border-neutral-700 p-2 rounded text-xs text-white font-mono font-bold focus:outline-none focus:border-[#e50914]"
                   />
                 </div>
@@ -482,7 +557,8 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
                     type="number"
                     min={0}
                     value={editMay}
-                    onChange={(e) => setEditMay(parseFloat(e.target.value) || 0)}
+                    placeholder="0"
+                    onChange={(e) => setEditMay(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
                     className="w-full bg-neutral-900 border border-neutral-700 p-2 rounded text-xs text-purple-300 font-mono font-bold focus:outline-none focus:border-[#e50914]"
                   />
                 </div>
@@ -642,11 +718,10 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
                   </label>
                   <input
                     type="number"
-                    required
                     min={0}
-                    value={pMinorista || ''}
-                    onChange={(e) => setPMinorista(parseFloat(e.target.value) || 0)}
+                    value={pMinorista}
                     placeholder="0"
+                    onChange={(e) => setPMinorista(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
                     className="w-full bg-neutral-900 border border-neutral-700 p-2 rounded text-xs text-white font-mono font-bold focus:outline-none focus:border-[#e50914]"
                   />
                 </div>
@@ -656,11 +731,10 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
                   </label>
                   <input
                     type="number"
-                    required
                     min={0}
-                    value={pMayorista || ''}
-                    onChange={(e) => setPMayorista(parseFloat(e.target.value) || 0)}
+                    value={pMayorista}
                     placeholder="0"
+                    onChange={(e) => setPMayorista(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
                     className="w-full bg-neutral-900 border border-neutral-700 p-2 rounded text-xs text-purple-300 font-mono font-bold focus:outline-none focus:border-[#e50914]"
                   />
                 </div>
@@ -684,6 +758,8 @@ export const CatalogoView: React.FC<CatalogoViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { multiScreenSync, ConnectedScreenInfo } from './services/multiScreenSyncService';
 import {
   ActiveModule,
   Pedido,
@@ -12,6 +13,8 @@ import {
   EtapaEstado,
   PedidoEstado,
   AppNotification,
+  InsumoInventario,
+  OrdenTrabajo,
 } from './types';
 import {
   INITIAL_PEDIDOS,
@@ -19,12 +22,15 @@ import {
   INITIAL_MAYORISTAS,
   INITIAL_COTIZACIONES,
   INITIAL_USUARIOS,
+  DEFAULT_PRIMARY_USER,
   INITIAL_SYNCLOGS,
   INITIAL_NOTIFICACIONES,
+  INITIAL_INVENTARIO,
   ROLE_PERMISSIONS,
   loadStoredData,
   saveStoredData,
 } from './data/initialData';
+import { checkDelivery8DayReminder } from './utils/orderHelpers';
 import {
   registerNotificationServiceWorker,
   sendBrowserNotification,
@@ -47,6 +53,11 @@ import { InvoicePrintModal } from './components/InvoicePrintModal';
 import { NotificationCenter } from './components/NotificationCenter';
 import { NotificationToast } from './components/NotificationToast';
 import { CreateReminderModal } from './components/CreateReminderModal';
+import { ResumenFinancieroView } from './components/ResumenFinancieroView';
+import { ChatModal } from './components/ChatModal';
+import { WhatsAppAutomationModal } from './components/WhatsAppAutomationModal';
+import { MessageSquare } from 'lucide-react';
+import { ChatMessage } from './types';
 
 const DEFAULT_GUEST_USER: UserAccount = {
   id: 'guest',
@@ -72,7 +83,11 @@ export default function App() {
       localStorage.removeItem('falpro_app_data_notifications');
       localStorage.removeItem('falpro_app_data_facturasSinPedido');
     } catch {}
-    return loadStoredData<UserAccount[]>('usuarios_v4', loadStoredData<UserAccount[]>('usuarios_v3', INITIAL_USUARIOS));
+    const stored = loadStoredData<UserAccount[]>('usuarios_v4', loadStoredData<UserAccount[]>('usuarios_v3', INITIAL_USUARIOS));
+    if (!stored || stored.length === 0 || !stored.some((u) => u.role === 'Administrador')) {
+      return [DEFAULT_PRIMARY_USER];
+    }
+    return stored;
   });
 
   // Always require login with password on page entry or reload
@@ -86,6 +101,14 @@ export default function App() {
 
   const [catalogo, setCatalogo] = useState<CatalogoProducto[]>(() =>
     loadStoredData<CatalogoProducto[]>('catalogo_v4', INITIAL_CATALOGO)
+  );
+
+  const [inventario, setInventario] = useState<InsumoInventario[]>(() =>
+    loadStoredData<InsumoInventario[]>('inventario_v4', INITIAL_INVENTARIO)
+  );
+
+  const [ordenesTrabajo, setOrdenesTrabajo] = useState<OrdenTrabajo[]>(() =>
+    loadStoredData<OrdenTrabajo[]>('ordenesTrabajo_v4', [])
   );
 
   const [mayoristas, setMayoristas] = useState<Mayorista[]>(() =>
@@ -115,6 +138,10 @@ export default function App() {
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
+  const [isChatModalOpen, setIsChatModalOpen] = useState(false);
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [isWhatsAppConnected, setIsWhatsAppConnected] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [selectedPedidoForAbono, setSelectedPedidoForAbono] = useState<Pedido | null>(null);
 
   // Printable invoice modal state
@@ -122,6 +149,182 @@ export default function App() {
   const [invoicePedido, setInvoicePedido] = useState<Pedido | null>(null);
   const [invoiceCotizacion, setInvoiceCotizacion] = useState<Cotizacion | null>(null);
   const [invoiceFacturaSP, setInvoiceFacturaSP] = useState<FacturaSinPedido | null>(null);
+
+  // Multi-screen real-time synchronization state
+  const isInitialLoadCompletedRef = useRef(false);
+  const lastSyncedJsonRef = useRef<Record<string, string>>({});
+  const [connectedScreensCount, setConnectedScreensCount] = useState(1);
+  const [connectedScreens, setConnectedScreens] = useState<ConnectedScreenInfo[]>([]);
+
+  // Check initial WhatsApp connection state
+  useEffect(() => {
+    fetch('/api/whatsapp/config')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.config?.connected !== undefined) {
+          setIsWhatsAppConnected(Boolean(data.config.connected));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch initial chat messages and subscribe to incoming real-time messages
+  useEffect(() => {
+    fetch('/api/chat/messages')
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data.messages)) {
+          setChatMessages(data.messages);
+        }
+      })
+      .catch(() => {});
+
+    const unsubChat = multiScreenSync.subscribeToChatMessages((incoming: ChatMessage) => {
+      setChatMessages((prev) => {
+        if (prev.some((m) => m.id === incoming.id)) return prev;
+        return [...prev, incoming];
+      });
+
+      // Show toast if chat is closed and message is from another user
+      if (incoming.senderId !== currentUser?.id && !isChatModalOpen) {
+        triggerNotification({
+          tipo: 'chat',
+          prioridad: 'normal',
+          titulo: `Mensaje de ${incoming.senderName}`,
+          mensaje: incoming.texto ? incoming.texto.slice(0, 80) : 'Ha enviado una foto en el chat',
+          leida: false,
+        });
+      }
+    });
+
+    return () => {
+      unsubChat();
+    };
+  }, [currentUser, isChatModalOpen]);
+
+  // Initialize multi-screen real-time channel and listen for remote updates
+  useEffect(() => {
+    multiScreenSync.init(activeModule, currentUser?.nombre);
+
+    const unsubCount = multiScreenSync.subscribeToScreenCount((count, screens) => {
+      setConnectedScreensCount(count);
+      setConnectedScreens(screens);
+    });
+
+    const applyStore = (store: Record<string, unknown>) => {
+      if (Array.isArray(store.pedidos)) {
+        lastSyncedJsonRef.current['pedidos'] = JSON.stringify(store.pedidos);
+        setPedidos(store.pedidos as Pedido[]);
+        saveStoredData('pedidos_v4', store.pedidos);
+      }
+      if (Array.isArray(store.catalogo)) {
+        lastSyncedJsonRef.current['catalogo'] = JSON.stringify(store.catalogo);
+        setCatalogo(store.catalogo as CatalogoProducto[]);
+        saveStoredData('catalogo_v4', store.catalogo);
+      }
+      if (Array.isArray(store.inventario)) {
+        lastSyncedJsonRef.current['inventario'] = JSON.stringify(store.inventario);
+        setInventario(store.inventario as InsumoInventario[]);
+        saveStoredData('inventario_v4', store.inventario);
+      }
+      if (Array.isArray(store.ordenesTrabajo)) {
+        lastSyncedJsonRef.current['ordenesTrabajo'] = JSON.stringify(store.ordenesTrabajo);
+        setOrdenesTrabajo(store.ordenesTrabajo as OrdenTrabajo[]);
+        saveStoredData('ordenesTrabajo_v4', store.ordenesTrabajo);
+      }
+      if (Array.isArray(store.mayoristas)) {
+        lastSyncedJsonRef.current['mayoristas'] = JSON.stringify(store.mayoristas);
+        setMayoristas(store.mayoristas as Mayorista[]);
+        saveStoredData('mayoristas_v4', store.mayoristas);
+      }
+      if (Array.isArray(store.cotizaciones)) {
+        lastSyncedJsonRef.current['cotizaciones'] = JSON.stringify(store.cotizaciones);
+        setCotizaciones(store.cotizaciones as Cotizacion[]);
+        saveStoredData('cotizaciones_v4', store.cotizaciones);
+      }
+      if (Array.isArray(store.facturasSinPedido)) {
+        lastSyncedJsonRef.current['facturasSinPedido'] = JSON.stringify(store.facturasSinPedido);
+        setFacturasSinPedido(store.facturasSinPedido as FacturaSinPedido[]);
+        saveStoredData('facturasSinPedido_v4', store.facturasSinPedido);
+      }
+      if (Array.isArray(store.usuarios) && store.usuarios.length > 0) {
+        lastSyncedJsonRef.current['usuarios'] = JSON.stringify(store.usuarios);
+        setUsuarios(store.usuarios as UserAccount[]);
+        saveStoredData('usuarios_v4', store.usuarios);
+      }
+      if (Array.isArray(store.syncLogs)) {
+        setSyncLogs(store.syncLogs as SyncLog[]);
+      }
+      isInitialLoadCompletedRef.current = true;
+    };
+
+    const unsubInitialState = multiScreenSync.subscribeToInitialState((store) => {
+      applyStore(store);
+    });
+
+    const unsubData = multiScreenSync.subscribeToEntityChanges((entity, data) => {
+      const json = JSON.stringify(data);
+      if (lastSyncedJsonRef.current[entity] === json) return; // Prevent echo bounce-back
+      lastSyncedJsonRef.current[entity] = json;
+
+      if (entity === 'pedidos' && Array.isArray(data)) {
+        setPedidos(data as Pedido[]);
+        saveStoredData('pedidos_v4', data);
+      } else if (entity === 'catalogo' && Array.isArray(data)) {
+        setCatalogo(data as CatalogoProducto[]);
+        saveStoredData('catalogo_v4', data);
+      } else if (entity === 'inventario' && Array.isArray(data)) {
+        setInventario(data as InsumoInventario[]);
+        saveStoredData('inventario_v4', data);
+      } else if (entity === 'ordenesTrabajo' && Array.isArray(data)) {
+        setOrdenesTrabajo(data as OrdenTrabajo[]);
+        saveStoredData('ordenesTrabajo_v4', data);
+      } else if (entity === 'cotizaciones' && Array.isArray(data)) {
+        setCotizaciones(data as Cotizacion[]);
+        saveStoredData('cotizaciones_v4', data);
+      } else if (entity === 'facturasSinPedido' && Array.isArray(data)) {
+        setFacturasSinPedido(data as FacturaSinPedido[]);
+        saveStoredData('facturasSinPedido_v4', data);
+      } else if (entity === 'mayoristas' && Array.isArray(data)) {
+        setMayoristas(data as Mayorista[]);
+        saveStoredData('mayoristas_v4', data);
+      } else if (entity === 'usuarios' && Array.isArray(data)) {
+        setUsuarios(data as UserAccount[]);
+        saveStoredData('usuarios_v4', data);
+      }
+    });
+
+    // Also fetch initial state via REST immediately on mount
+    multiScreenSync.fetchInitialState().then((store) => {
+      if (store) {
+        applyStore(store);
+      } else {
+        isInitialLoadCompletedRef.current = true;
+      }
+    }).catch(() => {
+      isInitialLoadCompletedRef.current = true;
+    });
+
+    return () => {
+      unsubCount();
+      unsubInitialState();
+      unsubData();
+    };
+  }, []);
+
+  // Update current user across the screen network
+  useEffect(() => {
+    if (currentUser) {
+      multiScreenSync.updateCurrentUser(`${currentUser.nombre} (${currentUser.role})`);
+    } else {
+      multiScreenSync.updateCurrentUser('');
+    }
+  }, [currentUser]);
+
+  // Inform other screens about active module changes
+  useEffect(() => {
+    multiScreenSync.updateActiveModule(activeModule);
+  }, [activeModule]);
 
   // Register service worker on mount and ensure session is cleared so reload requires login
   useEffect(() => {
@@ -132,28 +335,77 @@ export default function App() {
     } catch {}
   }, []);
 
+  // Sync entities outwards only when local user modifies them (preventing echo loops)
   useEffect(() => {
+    if (!isInitialLoadCompletedRef.current) return;
+    const json = JSON.stringify(pedidos);
+    if (lastSyncedJsonRef.current['pedidos'] === json) return;
+    lastSyncedJsonRef.current['pedidos'] = json;
     saveStoredData('pedidos_v4', pedidos);
+    multiScreenSync.broadcastEntityChange('pedidos', pedidos);
   }, [pedidos]);
 
   useEffect(() => {
+    if (!isInitialLoadCompletedRef.current) return;
+    const json = JSON.stringify(catalogo);
+    if (lastSyncedJsonRef.current['catalogo'] === json) return;
+    lastSyncedJsonRef.current['catalogo'] = json;
     saveStoredData('catalogo_v4', catalogo);
+    multiScreenSync.broadcastEntityChange('catalogo', catalogo);
   }, [catalogo]);
 
   useEffect(() => {
+    if (!isInitialLoadCompletedRef.current) return;
+    const json = JSON.stringify(inventario);
+    if (lastSyncedJsonRef.current['inventario'] === json) return;
+    lastSyncedJsonRef.current['inventario'] = json;
+    saveStoredData('inventario_v4', inventario);
+    multiScreenSync.broadcastEntityChange('inventario', inventario);
+  }, [inventario]);
+
+  useEffect(() => {
+    if (!isInitialLoadCompletedRef.current) return;
+    const json = JSON.stringify(ordenesTrabajo);
+    if (lastSyncedJsonRef.current['ordenesTrabajo'] === json) return;
+    lastSyncedJsonRef.current['ordenesTrabajo'] = json;
+    saveStoredData('ordenesTrabajo_v4', ordenesTrabajo);
+    multiScreenSync.broadcastEntityChange('ordenesTrabajo', ordenesTrabajo);
+  }, [ordenesTrabajo]);
+
+  useEffect(() => {
+    if (!isInitialLoadCompletedRef.current) return;
+    const json = JSON.stringify(mayoristas);
+    if (lastSyncedJsonRef.current['mayoristas'] === json) return;
+    lastSyncedJsonRef.current['mayoristas'] = json;
     saveStoredData('mayoristas_v4', mayoristas);
+    multiScreenSync.broadcastEntityChange('mayoristas', mayoristas);
   }, [mayoristas]);
 
   useEffect(() => {
+    if (!isInitialLoadCompletedRef.current) return;
+    const json = JSON.stringify(cotizaciones);
+    if (lastSyncedJsonRef.current['cotizaciones'] === json) return;
+    lastSyncedJsonRef.current['cotizaciones'] = json;
     saveStoredData('cotizaciones_v4', cotizaciones);
+    multiScreenSync.broadcastEntityChange('cotizaciones', cotizaciones);
   }, [cotizaciones]);
 
   useEffect(() => {
+    if (!isInitialLoadCompletedRef.current) return;
+    const json = JSON.stringify(facturasSinPedido);
+    if (lastSyncedJsonRef.current['facturasSinPedido'] === json) return;
+    lastSyncedJsonRef.current['facturasSinPedido'] = json;
     saveStoredData('facturasSinPedido_v4', facturasSinPedido);
+    multiScreenSync.broadcastEntityChange('facturasSinPedido', facturasSinPedido);
   }, [facturasSinPedido]);
 
   useEffect(() => {
+    if (!isInitialLoadCompletedRef.current) return;
+    const json = JSON.stringify(usuarios);
+    if (lastSyncedJsonRef.current['usuarios'] === json) return;
+    lastSyncedJsonRef.current['usuarios'] = json;
     saveStoredData('usuarios_v4', usuarios);
+    multiScreenSync.broadcastEntityChange('usuarios', usuarios);
   }, [usuarios]);
 
   // Open login modal automatically if there is no active session or zero users
@@ -216,10 +468,69 @@ export default function App() {
     sendBrowserNotification(newNotification);
   };
 
-  // Current Permissions
+  // Automated 8-Day Delivery Deadline Checker for unfinished orders
+  useEffect(() => {
+    pedidos.forEach((p) => {
+      const reminder = checkDelivery8DayReminder(p.fechaEntrega, p.estado);
+      if (reminder.isAlert) {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const storageKey = `falpro_8day_alert_${p.id}_${todayStr}`;
+        if (!localStorage.getItem(storageKey)) {
+          localStorage.setItem(storageKey, 'true');
+          triggerNotification({
+            tipo: 'recordatorio',
+            prioridad: reminder.severity === 'vencido' || reminder.severity === 'hoy' ? 'urgente' : 'alta',
+            titulo: `⚠️ Aviso de Entrega (8 Días): ${p.id}`,
+            mensaje: `El pedido de ${p.cliente} (${p.vehiculo}${p.placa ? ` - ${p.placa}` : ''}) ${reminder.statusText}. Estado: ${p.estado}.`,
+            leida: false,
+            pedidoId: p.id,
+            moduloDestino: 'pedidos',
+          });
+        }
+      }
+    });
+  }, [pedidos]);
+
+  // Current Permissions - checks user-level granular permissions first, falls back to role default
   const permissions =
-    (currentUser && ROLE_PERMISSIONS[currentUser.role]) || ROLE_PERMISSIONS.Consulta;
+    (currentUser && (currentUser.permissions || ROLE_PERMISSIONS[currentUser.role])) ||
+    ROLE_PERMISSIONS.Consulta;
   const unreadNotificationsCount = notifications.filter((n) => !n.leida).length;
+
+  // Compute unread team chat messages count
+  const unreadChatCount = chatMessages.filter(
+    (m) =>
+      m.senderId !== currentUser?.id &&
+      (!m.leidoPor || !m.leidoPor.includes(currentUser?.id || ''))
+  ).length;
+
+  // Background WhatsApp dispatcher helper
+  const dispatchAutomatedWhatsApp = async (
+    to: string,
+    message: string,
+    pedidoId?: string,
+    tipo?: string,
+    cliente?: string
+  ) => {
+    try {
+      await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, message, pedidoId, tipo, cliente }),
+      });
+    } catch (err) {
+      console.warn('Background WhatsApp dispatch error:', err);
+    }
+  };
+
+  // Auto-redirect if currentUser has restricted modules and activeModule is not permitted
+  useEffect(() => {
+    if (currentUser?.modulosPermitidos && currentUser.modulosPermitidos.length > 0) {
+      if (!currentUser.modulosPermitidos.includes(activeModule)) {
+        setActiveModule(currentUser.modulosPermitidos[0]);
+      }
+    }
+  }, [currentUser, activeModule]);
 
   // Handlers for Orders
   const handleSaveOrder = (newOrder: Pedido) => {
@@ -236,28 +547,71 @@ export default function App() {
       pedidoId: newOrder.id,
       moduloDestino: 'pedidos',
     });
+
+    // Automated WhatsApp Dispatch for New Order
+    const saldo = newOrder.saldo ?? Math.max(0, newOrder.total - (newOrder.abonos || []).reduce((s, a) => s + a.monto, 0));
+    const autoWppMsg = `🚛 *FALPRO S.A.S. - Confirmación de Pedido ${newOrder.id}*\nHola *${newOrder.cliente}*, confirmamos la creación de tu orden para *${newOrder.vehiculo}*${newOrder.placa ? ` (Placa: ${newOrder.placa})` : ''}.\nTotal: $${newOrder.total.toLocaleString()} COP | Saldo: $${saldo.toLocaleString()} COP.\n¡Te notificaremos automáticamente cada avance de fabricación!`;
+    dispatchAutomatedWhatsApp(newOrder.telefono, autoWppMsg, newOrder.id, 'nuevo_pedido', newOrder.cliente);
   };
 
   const handleUpdateOrderStatus = (pedidoId: string, nuevoEstado: PedidoEstado) => {
+    let targetCliente = '';
+    let targetVehiculo = '';
     setPedidos((prev) =>
-      prev.map((p) => (p.id === pedidoId ? { ...p, estado: nuevoEstado } : p))
+      prev.map((p) => {
+        if (p.id === pedidoId) {
+          targetCliente = p.cliente;
+          targetVehiculo = p.vehiculo;
+          return { ...p, estado: nuevoEstado };
+        }
+        return p;
+      })
     );
     logCloudSync(`Estado de pedido ${pedidoId} actualizado a "${nuevoEstado}"`);
 
     triggerNotification({
-      tipo: 'produccion',
-      titulo: `Estado de Pedido Actualizado`,
-      mensaje: `El pedido ${pedidoId} fue marcado en estado "${nuevoEstado}".`,
+      tipo: nuevoEstado === 'Listo para Instalación' || nuevoEstado === 'Entregado' ? 'whatsapp' : 'produccion',
+      titulo: nuevoEstado === 'Listo para Instalación' ? `¡Pedido Listo! Notificar por WhatsApp` : `Estado de Pedido Actualizado`,
+      mensaje: nuevoEstado === 'Listo para Instalación'
+        ? `El pedido ${pedidoId} (${targetCliente} - ${targetVehiculo}) está listo. ¡Notificación enviada vía WhatsApp al cliente!`
+        : `El pedido ${pedidoId} fue marcado en estado "${nuevoEstado}".`,
       leida: false,
-      prioridad: nuevoEstado === 'Listo para Instalación' ? 'alta' : 'normal',
+      prioridad: nuevoEstado === 'Listo para Instalación' ? 'urgente' : 'normal',
       pedidoId,
       moduloDestino: 'pedidos',
     });
+
+    // Automated WhatsApp Dispatch for Finished / Ready Order
+    if (nuevoEstado === 'Listo para Instalación') {
+      const targetP = pedidos.find((p) => p.id === pedidoId);
+      if (targetP) {
+        const targetSaldo = targetP.saldo ?? 0;
+        const readyMsg = `⚡ *FALPRO S.A.S. - ¡Tu Pedido está LISTO!*\nHola *${targetP.cliente}*, tus lujos para *${targetP.vehiculo}*${targetP.placa ? ` (Placa: ${targetP.placa})` : ''} están listos para instalación o recogida.\nSaldo pendiente: $${targetSaldo.toLocaleString()} COP.\n¡Te esperamos en nuestra sede principal FALPRO!`;
+        dispatchAutomatedWhatsApp(targetP.telefono, readyMsg, pedidoId, 'pedido_listo', targetP.cliente);
+      }
+    }
   };
 
   const handleDeleteOrder = (pedidoId: string) => {
     setPedidos((prev) => prev.filter((p) => p.id !== pedidoId));
     logCloudSync(`Pedido ${pedidoId} cancelado y removido de la base activa`);
+  };
+
+  const handleUpdateOrder = (updatedOrder: Pedido) => {
+    setPedidos((prev) =>
+      prev.map((p) => (p.id === updatedOrder.id ? updatedOrder : p))
+    );
+    logCloudSync(`Pedido modificado: ${updatedOrder.id} (${updatedOrder.cliente} - ${updatedOrder.vehiculo})`);
+
+    triggerNotification({
+      tipo: 'produccion',
+      titulo: `Pedido Modificado: ${updatedOrder.id}`,
+      mensaje: `Datos actualizados para ${updatedOrder.cliente} (${updatedOrder.vehiculo}). Total: $${updatedOrder.total.toLocaleString()} COP.`,
+      leida: false,
+      prioridad: 'normal',
+      pedidoId: updatedOrder.id,
+      moduloDestino: 'pedidos',
+    });
   };
 
   // Handlers for Down Payments (Abonos)
@@ -317,6 +671,13 @@ export default function App() {
       pedidoId,
       moduloDestino: 'pedidos',
     });
+
+    // Automated WhatsApp payment receipt
+    const targetPedido = pedidos.find((p) => p.id === pedidoId);
+    if (targetPedido) {
+      const payMsg = `💰 *FALPRO S.A.S. - Comprobante de Abono*\nHola *${targetPedido.cliente}*, recibimos tu abono por *$${abonoData.monto.toLocaleString()} COP* (${abonoData.metodo}) para el pedido *${pedidoId}* (${targetPedido.vehiculo}).\nNuevo saldo pendiente: *$${nuevoSaldo.toLocaleString()} COP*.\n¡Gracias por tu confianza!`;
+      dispatchAutomatedWhatsApp(targetPedido.telefono, payMsg, pedidoId, 'abono_recibido', targetPedido.cliente);
+    }
   };
 
   const handleDeleteAbono = (pedidoId: string, abonoId: string) => {
@@ -592,6 +953,76 @@ export default function App() {
     logCloudSync(`Producto eliminado del catálogo: ${prodId}`);
   };
 
+  // Handlers for Inventory of Lights & Workshop Supplies (Inventario de Luces e Insumos)
+  const handleAddInsumo = (newInsumo: InsumoInventario) => {
+    setInventario((prev) => [newInsumo, ...prev]);
+    logCloudSync(`Nuevo insumo agregado: ${newInsumo.nombre} (${newInsumo.stockActual} ${newInsumo.unidadMedida})`);
+
+    // Check low stock alert on addition
+    if (newInsumo.stockActual <= newInsumo.stockMinimo) {
+      triggerNotification({
+        tipo: 'inventario',
+        prioridad: 'urgente',
+        titulo: `⚠️ ¡Alerta de Inventario! Stock Bajo`,
+        mensaje: `El insumo "${newInsumo.nombre}" tiene solo ${newInsumo.stockActual} ${newInsumo.unidadMedida} disponibles (Mínimo requerido: ${newInsumo.stockMinimo}).`,
+        leida: false,
+        moduloDestino: 'catalogo',
+      });
+    }
+  };
+
+  const handleUpdateInsumo = (updatedInsumo: InsumoInventario) => {
+    setInventario((prev) =>
+      prev.map((i) => (i.id === updatedInsumo.id ? updatedInsumo : i))
+    );
+    logCloudSync(`Insumo modificado: ${updatedInsumo.nombre} (${updatedInsumo.id})`);
+
+    if (updatedInsumo.stockActual <= updatedInsumo.stockMinimo) {
+      triggerNotification({
+        tipo: 'inventario',
+        prioridad: 'urgente',
+        titulo: `⚠️ ¡Alerta de Inventario! Stock Bajo`,
+        mensaje: `El insumo "${updatedInsumo.nombre}" tiene solo ${updatedInsumo.stockActual} ${updatedInsumo.unidadMedida} disponibles (Mínimo requerido: ${updatedInsumo.stockMinimo}).`,
+        leida: false,
+        moduloDestino: 'catalogo',
+      });
+    }
+  };
+
+  const handleDeleteInsumo = (insumoId: string) => {
+    setInventario((prev) => prev.filter((i) => i.id !== insumoId));
+    logCloudSync(`Insumo eliminado del inventario: ${insumoId}`);
+  };
+
+  const handleAdjustStock = (insumoId: string, newStock: number, motivo: string) => {
+    setInventario((prev) =>
+      prev.map((i) => {
+        if (i.id === insumoId) {
+          const updated = {
+            ...i,
+            stockActual: newStock,
+            ultimaReposicion: new Date().toLocaleDateString(),
+          };
+
+          if (newStock <= i.stockMinimo) {
+            triggerNotification({
+              tipo: 'inventario',
+              prioridad: 'urgente',
+              titulo: `⚠️ ¡Alerta de Inventario! Pocas Unidades`,
+              mensaje: `Quedan solo ${newStock} ${i.unidadMedida} de "${i.nombre}" en bodega (Stock mínimo: ${i.stockMinimo}). ${motivo}`,
+              leida: false,
+              moduloDestino: 'catalogo',
+            });
+          }
+
+          return updated;
+        }
+        return i;
+      })
+    );
+    logCloudSync(`Ajuste de inventario en ${insumoId}: nuevo stock ${newStock} (${motivo})`);
+  };
+
   // Handlers for Wholesalers
   const handleAddMayorista = (m: Mayorista) => {
     setMayoristas((prev) => [...prev, m]);
@@ -661,10 +1092,52 @@ export default function App() {
     });
   };
 
-  // Handlers for Users
+  // Handlers for Work Orders (Órdenes de Trabajo)
+  const handleAddOrdenTrabajo = (newOt: OrdenTrabajo) => {
+    setOrdenesTrabajo((prev) => [newOt, ...prev]);
+    logCloudSync(`Nueva Orden de Trabajo creada: ${newOt.id} para ${newOt.cliente} (${newOt.bahia})`);
+
+    triggerNotification({
+      tipo: 'cronograma',
+      titulo: `Nueva Orden de Trabajo: ${newOt.id}`,
+      mensaje: `Generada OT para ${newOt.cliente} (${newOt.vehiculo}${newOt.placa ? ` - ${newOt.placa}` : ''}) en ${newOt.bahia}. Técnico Líder: ${newOt.tecnicoLider}.`,
+      leida: false,
+      prioridad: newOt.prioridad === 'Urgente' ? 'urgente' : 'normal',
+      moduloDestino: 'cronograma',
+    });
+  };
+
+  const handleUpdateOrdenTrabajo = (updatedOt: OrdenTrabajo) => {
+    setOrdenesTrabajo((prev) =>
+      prev.map((ot) => (ot.id === updatedOt.id ? updatedOt : ot))
+    );
+    logCloudSync(`Orden de Trabajo ${updatedOt.id} actualizada: estado "${updatedOt.estado}"`);
+
+    if (updatedOt.estado === 'Finalizada') {
+      triggerNotification({
+        tipo: 'cronograma',
+        titulo: `¡OT Finalizada! ${updatedOt.id}`,
+        mensaje: `La orden de trabajo para ${updatedOt.cliente} (${updatedOt.vehiculo}) fue finalizada en ${updatedOt.bahia}.`,
+        leida: false,
+        prioridad: 'alta',
+        moduloDestino: 'cronograma',
+      });
+    }
+  };
+
+  const handleDeleteOrdenTrabajo = (otId: string) => {
+    setOrdenesTrabajo((prev) => prev.filter((ot) => ot.id !== otId));
+    logCloudSync(`Orden de Trabajo ${otId} eliminada`);
+  };
+
+  // Handlers for Users (strictly restricted to primary user / Administrador)
   const handleAddUsuario = (newUsr: UserAccount) => {
+    if (currentUser?.role !== 'Administrador') {
+      alert('Operación denegada: únicamente el Usuario Principal / Administrador tiene permisos para crear usuarios.');
+      return;
+    }
     setUsuarios((prev) => [...prev, newUsr]);
-    logCloudSync(`Nuevo usuario creado en sistema: @${newUsr.user} (${newUsr.role})`);
+    logCloudSync(`Nuevo usuario creado en sistema por Administrador: @${newUsr.user} (${newUsr.role})`);
     if (!currentUser) {
       setCurrentUser(newUsr);
     }
@@ -764,7 +1237,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0d0d0d] text-white flex flex-col font-sans selection:bg-[#e50914] selection:text-white">
-      {/* Top Bar Navigation with Notification Bell */}
+      {/* Top Bar Navigation with Notification Bell and Multi-screen sync */}
       <Navbar
         activeModule={activeModule}
         setActiveModule={setActiveModule}
@@ -772,6 +1245,13 @@ export default function App() {
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         unreadNotificationsCount={unreadNotificationsCount}
         onOpenNotifications={() => setIsNotificationsOpen(!isNotificationsOpen)}
+        connectedScreensCount={connectedScreensCount}
+        connectedScreens={connectedScreens}
+        onTriggerSync={() => multiScreenSync.fetchInitialState()}
+        onOpenChat={() => setIsChatModalOpen(true)}
+        unreadChatCount={unreadChatCount}
+        onOpenWhatsApp={() => setIsWhatsAppModalOpen(true)}
+        isWhatsAppConnected={isWhatsAppConnected}
       />
 
       {/* Main Content Area */}
@@ -794,8 +1274,11 @@ export default function App() {
             onOpenInvoiceModal={handleOpenPrintModalForPedido}
             onOpenAbonosModal={handleOpenAbonosModal}
             onUpdateOrderStatus={handleUpdateOrderStatus}
+            onUpdateOrder={handleUpdateOrder}
             onDeleteOrder={handleDeleteOrder}
             permissions={permissions}
+            catalogo={catalogo}
+            currentUser={currentUser || DEFAULT_GUEST_USER}
           />
         )}
 
@@ -832,6 +1315,11 @@ export default function App() {
             onUpdatePrecios={handleUpdatePrecios}
             currentUser={currentUser || DEFAULT_GUEST_USER}
             permissions={permissions}
+            inventario={inventario}
+            onAddInsumo={handleAddInsumo}
+            onUpdateInsumo={handleUpdateInsumo}
+            onDeleteInsumo={handleDeleteInsumo}
+            onAdjustStock={handleAdjustStock}
           />
         )}
 
@@ -848,6 +1336,12 @@ export default function App() {
             pedidos={pedidos}
             onToggleConfirmacion={handleToggleConfirmacion}
             onUpdateFechaInstalacion={handleUpdateFechaInstalacion}
+            currentUser={currentUser || DEFAULT_GUEST_USER}
+            permissions={permissions}
+            ordenesTrabajo={ordenesTrabajo}
+            onAddOrdenTrabajo={handleAddOrdenTrabajo}
+            onUpdateOrdenTrabajo={handleUpdateOrdenTrabajo}
+            onDeleteOrdenTrabajo={handleDeleteOrdenTrabajo}
           />
         )}
 
@@ -868,6 +1362,15 @@ export default function App() {
             onDeleteUsuario={handleDeleteUsuario}
             onToggleEstadoUsuario={handleToggleEstadoUsuario}
             currentUser={currentUser}
+          />
+        )}
+
+        {activeModule === 'resumenFinanciero' && (
+          <ResumenFinancieroView
+            pedidos={pedidos}
+            cotizaciones={cotizaciones}
+            facturasSinPedido={facturasSinPedido}
+            currentUser={currentUser || DEFAULT_GUEST_USER}
           />
         )}
       </main>
@@ -971,6 +1474,58 @@ export default function App() {
         pedido={invoicePedido}
         cotizacion={invoiceCotizacion}
         facturaSinPedido={invoiceFacturaSP}
+      />
+
+      {/* Floating Team Chat Launcher Dock */}
+      <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-2">
+        <button
+          onClick={() => setIsChatModalOpen(true)}
+          className="p-3.5 bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-white rounded-2xl shadow-xl shadow-red-950/70 border border-red-500/40 flex items-center gap-2.5 transition-all hover:scale-105 cursor-pointer group"
+          title="Abrir Chat de Taller y Usuarios FALPRO"
+        >
+          <div className="relative">
+            <MessageSquare className="w-5 h-5 group-hover:rotate-6 transition-transform" />
+            {unreadChatCount > 0 && (
+              <span className="absolute -top-2.5 -right-2.5 min-w-[20px] h-5 px-1 bg-white text-red-700 text-[10px] font-black rounded-full flex items-center justify-center font-mono shadow-md animate-pulse">
+                {unreadChatCount}
+              </span>
+            )}
+          </div>
+          <span className="text-xs font-black tracking-wide hidden sm:inline">
+            Chat Taller
+          </span>
+        </button>
+      </div>
+
+      {/* User-to-User & Workshop Real-Time Chat Modal */}
+      <ChatModal
+        isOpen={isChatModalOpen}
+        onClose={() => setIsChatModalOpen(false)}
+        currentUser={currentUser}
+        allUsers={usuarios}
+        pedidos={pedidos}
+        connectedScreens={connectedScreens}
+        onSelectPedido={(p) => {
+          setIsChatModalOpen(false);
+          setActiveModule('pedidos');
+        }}
+      />
+
+      {/* WhatsApp Automation & QR Linking Modal */}
+      <WhatsAppAutomationModal
+        isOpen={isWhatsAppModalOpen}
+        onClose={() => {
+          setIsWhatsAppModalOpen(false);
+          fetch('/api/whatsapp/config')
+            .then((r) => r.json())
+            .then((data) => {
+              if (data?.config?.connected !== undefined) {
+                setIsWhatsAppConnected(Boolean(data.config.connected));
+              }
+            })
+            .catch(() => {});
+        }}
+        pedidos={pedidos}
       />
     </div>
   );

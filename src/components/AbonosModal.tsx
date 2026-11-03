@@ -20,7 +20,7 @@ export const AbonosModal: React.FC<AbonosModalProps> = ({
   onDeleteAbono,
 }) => {
   const [monto, setMonto] = useState('');
-  const [metodo, setMetodo] = useState('Transferencia Bancaria');
+  const [metodo, setMetodo] = useState('');
   const [comprobante, setComprobante] = useState('');
 
   if (!isOpen || !pedido) return null;
@@ -127,8 +127,10 @@ export const AbonosModal: React.FC<AbonosModalProps> = ({
               <select
                 value={metodo}
                 onChange={(e) => setMetodo(e.target.value)}
+                required
                 className="w-full bg-neutral-800 border border-neutral-700 p-2 rounded text-xs text-white focus:outline-none focus:border-[#e50914]"
               >
+                <option value="">-- Seleccionar Método --</option>
                 <option value="Transferencia Bancaria">Transferencia Bancaria (Bancolombia)</option>
                 <option value="Efectivo">Efectivo en Caja</option>
                 <option value="Datáfono / Tarjeta">Datáfono / Tarjeta Débito/Crédito</option>
